@@ -181,12 +181,12 @@ void CameraService::onFirstRef()
         setUpVendorTags();
     }
 
-    mFlashlight = new CameraFlashlight(*mModule, *this);
+    /*mFlashlight = new CameraFlashlight(*mModule, *this);
     status_t res = mFlashlight->findFlashUnits();
     if (res) {
         // impossible because we haven't open any camera devices.
         ALOGE("Failed to find flash units.");
-    }
+    }*/
 
     int latestStrangeCameraId = INT_MAX;
     for (int i = 0; i < mNumberOfCameras; i++) {
@@ -237,10 +237,10 @@ void CameraService::onFirstRef()
                     conflicting));
         }
 
-        if (mFlashlight->hasFlashUnit(cameraId)) {
+        /*if (mFlashlight->hasFlashUnit(cameraId)) {
             mTorchStatusMap.add(cameraId,
                     ICameraServiceListener::TORCH_STATUS_AVAILABLE_OFF);
-        }
+        }*/
     }
 
     if (mModule->getModuleApiVersion() >= CAMERA_MODULE_API_VERSION_2_1) {
@@ -1308,13 +1308,13 @@ status_t CameraService::setTorchMode(const String16& cameraId, bool enabled,
         }
     }
 
-    status_t res = mFlashlight->setTorchMode(id, enabled);
+    /*status_t res = mFlashlight->setTorchMode(id, enabled);*/
 
-    if (res) {
+    /*if (res) {
         ALOGE("%s: setting torch mode of camera %s to %d failed. %s (%d)",
                 __FUNCTION__, id.string(), enabled, strerror(-res), res);
         return res;
-    }
+    }*/
 
     {
         // update the link to client's death
@@ -2036,8 +2036,8 @@ status_t CameraService::BasicClient::finishCameraOps() {
                 String8::format("%d", mCameraId));
 
         // Notify flashlight that a camera device is closed.
-        mCameraService->mFlashlight->deviceClosed(
-                String8::format("%d", mCameraId));
+        /*mCameraService->mFlashlight->deviceClosed(
+                String8::format("%d", mCameraId));*/
     }
     // Always stop watching, even if no camera op is active
     if (mOpsCallback != NULL) {
@@ -2461,12 +2461,12 @@ void CameraService::handleTorchClientBinderDied(const wp<IBinder> &who) {
         if (mTorchClientMap[i] == who) {
             // turn off the torch mode that was turned on by dead client
             String8 cameraId = mTorchClientMap.keyAt(i);
-            status_t res = mFlashlight->setTorchMode(cameraId, false);
+            /*status_t res = mFlashlight->setTorchMode(cameraId, false);
             if (res) {
                 ALOGE("%s: torch client died but couldn't turn off torch: "
                     "%s (%d)", __FUNCTION__, strerror(-res), res);
                 return;
-            }
+            }*/
             mTorchClientMap.removeItemsAt(i);
             break;
         }
