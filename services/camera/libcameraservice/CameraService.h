@@ -891,7 +891,9 @@ binder::Status CameraService::connectHelper(const sp<CALLBACK>& cameraCb, const 
         }
 
         // give flashlight a chance to close devices if necessary.
+#ifndef NO_FLASHLIGHT
         mFlashlight->prepareDeviceOpen(cameraId);
+#endif
 
         // TODO: Update getDeviceVersion + HAL interface to use strings for Camera IDs
         int id = cameraIdToInt(cameraId);

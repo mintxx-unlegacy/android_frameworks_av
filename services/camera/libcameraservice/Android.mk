@@ -79,6 +79,10 @@ LOCAL_EXPORT_C_INCLUDE_DIRS := \
 
 LOCAL_CFLAGS += -Wall -Wextra -Werror
 
+ifeq ($(TARGET_CAMERA_HAS_NO_FLASH),true)
+LOCAL_CPPFLAGS += -DNO_FLASHLIGHT
+endif
+
 LOCAL_MODULE:= libcameraservice
 
 include $(BUILD_SHARED_LIBRARY)
