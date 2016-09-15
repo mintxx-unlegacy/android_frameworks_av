@@ -374,9 +374,9 @@ void CameraService::onTorchStatusChanged(const String8& cameraId,
 
 void CameraService::onTorchStatusChangedLocked(const String8& cameraId,
         int32_t newStatus) {
-#ifndef NO_FLASHLIGHT
     ALOGI("%s: Torch status changed for cameraId=%s, newStatus=%d",
             __FUNCTION__, cameraId.string(), newStatus);
+#ifndef NO_FLASHLIGHT
 
     int32_t status;
     status_t res = getTorchStatusLocked(cameraId, &status);
