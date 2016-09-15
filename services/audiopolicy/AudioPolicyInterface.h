@@ -345,8 +345,8 @@ public:
 
 };
 
-extern "C" AudioPolicyInterface* createAudioPolicyManager(AudioPolicyClientInterface *clientInterface);
-extern "C" void destroyAudioPolicyManager(AudioPolicyInterface *interface);
+//extern "C" AudioPolicyInterface* createAudioPolicyManager(AudioPolicyClientInterface *clientInterface);
+//extern "C" void destroyAudioPolicyManager(AudioPolicyInterface *interface);
 
 
 }; // namespace android
