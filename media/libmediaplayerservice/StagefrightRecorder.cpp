@@ -44,6 +44,8 @@
 #include <media/stagefright/MediaDefs.h>
 #include <media/stagefright/MetaData.h>
 #include <media/stagefright/MediaCodecSource.h>
+#include <media/stagefright/OMXClient.h>
+#include <media/stagefright/WAVEWriter.h>
 #include <media/MediaProfiles.h>
 #include <camera/CameraParameters.h>
 
@@ -51,6 +53,7 @@
 #include <sys/types.h>
 #include <ctype.h>
 #include <unistd.h>
+#include <math.h>
 
 #include <system/audio.h>
 
@@ -588,7 +591,7 @@ status_t StagefrightRecorder::setParamCaptureFpsEnable(int32_t captureFpsEnable)
 status_t StagefrightRecorder::setParamCaptureFps(float fps) {
     ALOGV("setParamCaptureFps: %.2f", fps);
 
-    int64_t timeUs = (int64_t) (1000000.0 / fps + 0.5f);
+    int64_t timeUs = (int64_t) (1000000.0f / fps + 0.5f);
 
     // Not allowing time more than a day
     if (timeUs <= 0 || timeUs > 86400*1E6) {
@@ -821,6 +824,10 @@ status_t StagefrightRecorder::prepareInternal() {
             status = setupMPEG2TSRecording();
             break;
 
+        case OUTPUT_FORMAT_WAVE:
+            status = setupWAVERecording();
+            break;
+
         default:
             if (handleCustomRecording() != OK) {
                 ALOGE("Unsupported output file format: %d", mOutputFormat);
@@ -882,6 +889,7 @@ status_t StagefrightRecorder::start() {
         case OUTPUT_FORMAT_AAC_ADTS:
         case OUTPUT_FORMAT_RTP_AVP:
         case OUTPUT_FORMAT_MPEG2TS:
+        case OUTPUT_FORMAT_WAVE:
         {
             status = mWriter->start();
             break;
@@ -974,6 +982,9 @@ sp<MediaCodecSource> StagefrightRecorder::createAudioSource() {
         case AUDIO_ENCODER_AAC_ELD:
             format->setString("mime", MEDIA_MIMETYPE_AUDIO_AAC);
             format->setInt32("aac-profile", OMX_AUDIO_AACObjectELD);
+            break;
+        case AUDIO_ENCODER_LPCM:
+            format->setString("mime", MEDIA_MIMETYPE_AUDIO_RAW);
             break;
 
         default:
@@ -1178,6 +1189,15 @@ status_t StagefrightRecorder::setupMPEG2TSRecording() {
     mWriter = writer;
 
     return OK;
+}
+
+status_t StagefrightRecorder::setupWAVERecording() {
+    CHECK(mOutputFormat == OUTPUT_FORMAT_WAVE);
+    CHECK(mAudioEncoder == AUDIO_ENCODER_LPCM);
+    CHECK(mAudioSource != AUDIO_SOURCE_CNT);
+
+    mWriter = new WAVEWriter(mOutputFd);
+    return setupRawAudioRecording();
 }
 
 void StagefrightRecorder::clipVideoFrameRate() {
@@ -1586,6 +1606,16 @@ status_t StagefrightRecorder::setupVideoEncoder(
     format->setInt32("priority", 0 /* realtime */);
     if (mCaptureFpsEnable) {
         format->setFloat("operating-rate", mCaptureFps);
+
+        // Enable layers if capture-rate > 60
+        // Number of layers will be based on the ratio wrt 30fps
+        float speed = mCaptureFps / mFrameRate;
+        if (mCaptureFps > 60.0 && speed > 2.0) {
+            int32_t numLayers = (int32_t)log2f(speed) + 1;
+            ALOGI("Enabling %d layers for capture-rate(%f) / fps(%u)",
+                    numLayers, mCaptureFps, mFrameRate);
+            format->setInt32("num-temporal-layers", numLayers);
+        }
     }
 
     if (mMetaDataStoredInVideoBuffers != kMetadataBufferTypeInvalid) {
@@ -1634,6 +1664,7 @@ status_t StagefrightRecorder::setupAudioEncoder(const sp<MediaWriter>& writer) {
         case AUDIO_ENCODER_AAC:
         case AUDIO_ENCODER_HE_AAC:
         case AUDIO_ENCODER_AAC_ELD:
+        case AUDIO_ENCODER_LPCM:
             break;
 
         default:
@@ -1663,7 +1694,7 @@ status_t StagefrightRecorder::setupMPEG4orWEBMRecording() {
     if (mOutputFormat == OUTPUT_FORMAT_WEBM) {
         writer = new WebmWriter(mOutputFd);
     } else {
-        writer = mp4writer = AVFactory::get()->CreateMPEG4Writer(mOutputFd);
+        writer = mp4writer = new MPEG4Writer(mOutputFd);
     }
 
     if (mVideoSource < VIDEO_SOURCE_LIST_END) {

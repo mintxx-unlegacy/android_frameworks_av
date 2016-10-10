@@ -278,6 +278,37 @@ void SoundTriggerHwService::sendRecognitionEvent(struct sound_trigger_recognitio
      if (module == NULL) {
          return;
      }
+    if (event-> type == SOUND_MODEL_TYPE_KEYPHRASE && event->data_size != 0
+        && event->data_offset != sizeof(struct sound_trigger_phrase_recognition_event)) {
+        // set some defaults for the phrase if the recognition event won't be parsed properly
+        // TODO: read defaults from the config
+
+        struct sound_trigger_phrase_recognition_event newEvent;
+        memset(&newEvent, 0, sizeof(struct sound_trigger_phrase_recognition_event));
+
+        sp<Model> model = module->getModel(event->model);
+
+        newEvent.num_phrases = 1;
+        newEvent.phrase_extras[0].id = 100;
+        newEvent.phrase_extras[0].recognition_modes = RECOGNITION_MODE_VOICE_TRIGGER;
+        newEvent.phrase_extras[0].confidence_level = 100;
+        newEvent.phrase_extras[0].num_levels = 1;
+        newEvent.phrase_extras[0].levels[0].level = 100;
+        newEvent.phrase_extras[0].levels[0].user_id = 100;
+        newEvent.common.status = event->status;
+        newEvent.common.type = event->type;
+        newEvent.common.model = event->model;
+        newEvent.common.capture_available = event->capture_available;
+        newEvent.common.capture_session = event->capture_session;
+        newEvent.common.capture_delay_ms = event->capture_delay_ms;
+        newEvent.common.capture_preamble_ms = event->capture_preamble_ms;
+        newEvent.common.trigger_in_data = event->trigger_in_data;
+        newEvent.common.audio_config = event->audio_config;
+        newEvent.common.data_size = event->data_size;
+        newEvent.common.data_offset = sizeof(struct sound_trigger_phrase_recognition_event);
+
+         event = &newEvent.common;
+     }
      sp<IMemory> eventMemory = prepareRecognitionEvent_l(event);
      if (eventMemory == 0) {
          return;
@@ -542,6 +573,22 @@ status_t SoundTriggerHwService::Module::loadSoundModel(const sp<IMemory>& modelM
     struct sound_trigger_sound_model *sound_model =
             (struct sound_trigger_sound_model *)modelMemory->pointer();
 
+    size_t structSize;
+    if (sound_model->type == SOUND_MODEL_TYPE_KEYPHRASE) {
+        structSize = sizeof(struct sound_trigger_phrase_sound_model);
+    } else {
+        structSize = sizeof(struct sound_trigger_sound_model);
+    }
+
+    if (sound_model->data_offset < structSize ||
+           sound_model->data_size > (UINT_MAX - sound_model->data_offset) ||
+           modelMemory->size() < sound_model->data_offset ||
+           sound_model->data_size > (modelMemory->size() - sound_model->data_offset)) {
+        android_errorWriteLog(0x534e4554, "30148546");
+        ALOGE("loadSoundModel() data_size is too big");
+        return BAD_VALUE;
+    }
+
     AutoMutex lock(mLock);
 
     if (mModels.size() >= mDescriptor.properties.max_sound_models) {
@@ -607,11 +654,23 @@ status_t SoundTriggerHwService::Module::startRecognition(sound_model_handle_t ha
         return PERMISSION_DENIED;
     }
 
-    if (dataMemory != 0 && dataMemory->pointer() == NULL) {
-        ALOGE("startRecognition() dataMemory is non-0 but has NULL pointer()");
+    if (dataMemory == 0 || dataMemory->pointer() == NULL) {
+        ALOGE("startRecognition() dataMemory is 0 or has NULL pointer()");
         return BAD_VALUE;
 
     }
+
+    struct sound_trigger_recognition_config *config =
+            (struct sound_trigger_recognition_config *)dataMemory->pointer();
+
+    if (config->data_offset < sizeof(struct sound_trigger_recognition_config) ||
+            config->data_size > (UINT_MAX - config->data_offset) ||
+            dataMemory->size() < config->data_offset ||
+            config->data_size > (dataMemory->size() - config->data_offset)) {
+        ALOGE("startRecognition() data_size is too big");
+        return BAD_VALUE;
+    }
+
     AutoMutex lock(mLock);
     if (mServiceState == SOUND_TRIGGER_STATE_DISABLED) {
         return INVALID_OPERATION;
@@ -620,17 +679,11 @@ status_t SoundTriggerHwService::Module::startRecognition(sound_model_handle_t ha
     if (model == 0) {
         return BAD_VALUE;
     }
-    if ((dataMemory == 0) ||
-            (dataMemory->size() < sizeof(struct sound_trigger_recognition_config))) {
-        return BAD_VALUE;
-    }
 
     if (model->mState == Model::STATE_ACTIVE) {
         return INVALID_OPERATION;
     }
 
-    struct sound_trigger_recognition_config *config =
-            (struct sound_trigger_recognition_config *)dataMemory->pointer();
 
     //TODO: get capture handle and device from audio policy service
     config->capture_handle = model->mCaptureIOHandle;

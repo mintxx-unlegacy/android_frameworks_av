@@ -36,6 +36,9 @@
 
 #include <stagefright/AVExtensions.h>
 #include "mediaplayerservice/AVNuExtensions.h"
+
+#include <stagefright/FFMPEGSoftCodec.h>
+
 #include <gui/Surface.h>
 
 #include "avc_utils.h"
@@ -71,6 +74,8 @@ NuPlayer::Decoder::Decoder(
       mIsSecure(false),
       mFormatChangePending(false),
       mTimeChangePending(false),
+      mPlaybackSpeed(1.0f),
+      mVideoTemporalLayerCount(0),
       mResumePending(false),
       mComponentName("decoder") {
     mCodecLooper = new ALooper;
@@ -253,10 +258,18 @@ void NuPlayer::Decoder::onConfigure(const sp<AMessage> &format) {
     ALOGV("[%s] onConfigure (surface=%p)", mComponentName.c_str(), mSurface.get());
 
     mCodec = AVUtils::get()->createCustomComponentByName(mCodecLooper, mime.c_str(), false /* encoder */, format);
+    FFMPEGSoftCodec::overrideComponentName(0, format, &mComponentName, &mime, false);
+
     if (mCodec == NULL) {
-    mCodec = MediaCodec::CreateByType(
-            mCodecLooper, mime.c_str(), false /* encoder */, NULL /* err */, mPid);
+        if (!mComponentName.startsWith(mime.c_str())) {
+            mCodec = MediaCodec::CreateByComponentName(
+                    mCodecLooper, mComponentName.c_str(), NULL, mPid);
+        } else {
+            mCodec = MediaCodec::CreateByType(
+                    mCodecLooper, mime.c_str(), false /* encoder */, NULL /* err */, mPid);
+        }
     }
+
     int32_t secure = 0;
     if (format->findInt32("secure", &secure) && secure != 0) {
         if (mCodec != NULL) {
@@ -336,6 +349,11 @@ void NuPlayer::Decoder::onConfigure(const sp<AMessage> &format) {
 void NuPlayer::Decoder::onSetParameters(const sp<AMessage> &params) {
     if (mCodec == NULL) {
         ALOGW("onSetParameters called before codec is created.");
+        return;
+    }
+    if (params->findFloat("playback-speed", &mPlaybackSpeed)) {
+        return;
+    } else if (params->findInt32("temporal-layer-count", &mVideoTemporalLayerCount)) {
         return;
     }
     mCodec->setParameters(params);
@@ -759,7 +777,44 @@ status_t NuPlayer::Decoder::fetchInputData(sp<AMessage> &reply) {
         }
 
         dropAccessUnit = false;
+        int32_t layerId = 0;
         if (!mIsAudio
+                && !mIsSecure
+                && mPlaybackSpeed > 1.0f
+                && accessUnit->meta()->findInt32("temporal-layer-id", &layerId)) {
+
+                if ((layerId + 1) > mVideoTemporalLayerCount) {
+                    mVideoTemporalLayerCount = layerId + 1;
+                }
+
+            /*
+                For content encoded with hierarchical layers,
+                drop input frames from selective enhancement layers when
+                playing back at faster speeds.
+
+                speed = 1x (decode all layers)
+                layer-d       0   2   1   2   0   2   1   2   0
+                decode      | 0 |33 |66 |99 |133|166|199|233|266|
+                render      | 0 |33 |66 |99 |133|166|199|233|266|
+
+                speed = 2x (drop layer-2)
+                layer-d       0   2   1   2   0   2   1   2   0
+                decode      | 0 |   |66 |   |133|   |199|   |266|
+                render      | 0 |66 |133|199|266|
+
+                speed = 4x (drop layer-2 and layer-1)
+                layer-d       0   2   1   2   0   2   1   2   0
+                decode      | 0 |           |133|          |266|
+                render      | 0 |133|266|
+            */
+            int32_t dropLayerThreshold = mVideoTemporalLayerCount - (uint32_t)log2f(mPlaybackSpeed) - 1;
+            dropLayerThreshold = dropLayerThreshold < 0 ? 0 : dropLayerThreshold;
+            dropAccessUnit = layerId > dropLayerThreshold;
+            if (dropAccessUnit) {
+                ALOGV("dropping layer=%d [@speed=%g, will drop layers with id > %d]",
+                        layerId, mPlaybackSpeed, dropLayerThreshold);
+            }
+        } else if (!mIsAudio
                 && !mIsSecure
                 && mRenderer->getVideoLateByUs() > 100000ll
                 && mIsVideoAVC
@@ -767,6 +822,7 @@ status_t NuPlayer::Decoder::fetchInputData(sp<AMessage> &reply) {
             dropAccessUnit = true;
             ++mNumInputFramesDropped;
         }
+
     } while (dropAccessUnit);
 
     // ALOGV("returned a valid buffer of %s data", mIsAudio ? "mIsAudio" : "video");
