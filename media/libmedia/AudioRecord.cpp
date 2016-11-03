@@ -272,7 +272,12 @@ status_t AudioRecord::set(
     mStatus = NO_ERROR;
     mUserData = user;
     // TODO: add audio hardware input latency here
-    mLatency = (1000 * mFrameCount) / mSampleRate;
+    if (mTransfer == TRANSFER_CALLBACK ||
+            mTransfer == TRANSFER_SYNC) {
+        mLatency = (1000 * mNotificationFramesAct) / sampleRate;
+    } else {
+        mLatency = (1000 * mFrameCount) / sampleRate;
+    }
     mMarkerPosition = 0;
     mMarkerReached = false;
     mNewPosition = 0;
@@ -595,11 +600,10 @@ status_t AudioRecord::openRecord_l(const Modulo<uint32_t> &epoch, const String16
     size_t notificationFrames = mNotificationFramesReq;
     size_t frameCount = mReqFrameCount;
 
-    IAudioFlinger::track_flags_t trackFlags = IAudioFlinger::TRACK_DEFAULT;
+    audio_input_flags_t flags = mFlags;
 
     pid_t tid = -1;
     if (mFlags & AUDIO_INPUT_FLAG_FAST) {
-        trackFlags |= IAudioFlinger::TRACK_FAST;
         if (mAudioRecordThread != 0) {
             tid = mAudioRecordThread->getTid();
         }
@@ -617,7 +621,7 @@ status_t AudioRecord::openRecord_l(const Modulo<uint32_t> &epoch, const String16
                                                        mChannelMask,
                                                        opPackageName,
                                                        &temp,
-                                                       &trackFlags,
+                                                       &flags,
                                                        mClientPid,
                                                        tid,
                                                        mClientUid,
@@ -640,7 +644,7 @@ status_t AudioRecord::openRecord_l(const Modulo<uint32_t> &epoch, const String16
 
     mAwaitBoost = false;
     if (mFlags & AUDIO_INPUT_FLAG_FAST) {
-        if (trackFlags & IAudioFlinger::TRACK_FAST) {
+        if (flags & AUDIO_INPUT_FLAG_FAST) {
             ALOGI("AUDIO_INPUT_FLAG_FAST successful; frameCount %zu", frameCount);
             mAwaitBoost = true;
         } else {
@@ -650,6 +654,7 @@ status_t AudioRecord::openRecord_l(const Modulo<uint32_t> &epoch, const String16
             continue;   // retry
         }
     }
+    mFlags = flags;
 
     if (iMem == 0) {
         ALOGE("Could not get control block");
@@ -893,6 +898,9 @@ ssize_t AudioRecord::read(void* buffer, size_t userSize, bool blocking)
             if (read > 0) {
                 break;
             }
+            if (err == TIMED_OUT || err == -EINTR) {
+                err = WOULD_BLOCK;
+            }
             return ssize_t(err);
         }
 
@@ -923,7 +931,7 @@ nsecs_t AudioRecord::processAudioBuffer()
         int32_t tryCounter = kMaxTries;
         uint32_t pollUs = 10000;
         do {
-            int policy = sched_getscheduler(0);
+            int policy = sched_getscheduler(0) & ~SCHED_RESET_ON_FORK;
             if (policy == SCHED_FIFO || policy == SCHED_RR) {
                 break;
             }

@@ -158,6 +158,10 @@ static int32_t getColorFormat(const char* colorFormat) {
         return OMX_COLOR_FormatAndroidOpaque;
     }
 
+    if (!strcmp(colorFormat, "YVU420SemiPlanar")) {
+        return OMX_QCOM_COLOR_FormatYVU420SemiPlanar;
+    }
+
     ALOGE("Uknown color format (%s), please add it to "
          "CameraSource::getColorFormat", colorFormat);
 
@@ -1274,8 +1278,10 @@ MetadataBufferType CameraSource::metaDataStoredInVideoBuffers() const {
     // Output buffers will contain metadata if camera sends us buffer in metadata mode or via
     // buffer queue.
     switch (mVideoBufferMode) {
+#ifndef EXYNOS4_ENHANCEMENTS
         case hardware::ICamera::VIDEO_BUFFER_MODE_DATA_CALLBACK_METADATA:
             return kMetadataBufferTypeNativeHandleSource;
+#endif
         case hardware::ICamera::VIDEO_BUFFER_MODE_BUFFER_QUEUE:
             return kMetadataBufferTypeANWBuffer;
         default:

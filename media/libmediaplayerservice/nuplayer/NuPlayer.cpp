@@ -785,16 +785,9 @@ void NuPlayer::onMessageReceived(const sp<AMessage> &msg) {
             }
 
             if (mVideoDecoder != NULL) {
-                float rate = getFrameRate();
-                if (rate > 0) {
-                    sp<AMessage> params = new AMessage();
-                    params->setFloat("operating-rate", rate * mPlaybackSettings.mSpeed);
-                    mVideoDecoder->setParameters(params);
-
-                    params = new AMessage();
-                    params->setFloat("playback-speed", mPlaybackSettings.mSpeed);
-                    mVideoDecoder->setParameters(params);
-                }
+                sp<AMessage> params = new AMessage();
+                params->setFloat("playback-speed", mPlaybackSettings.mSpeed);
+                mVideoDecoder->setParameters(params);
             }
 
             sp<AMessage> response = new AMessage;
@@ -1010,6 +1003,7 @@ void NuPlayer::onMessageReceived(const sp<AMessage> &msg) {
                 sp<AMessage> inputFormat =
                         mSource->getFormat(false /* audio */);
 
+                setVideoScalingMode(mVideoScalingMode);
                 updateVideoSize(inputFormat, format);
             } else if (what == DecoderBase::kWhatShutdownCompleted) {
                 ALOGV("%s shutdown completed", audio ? "audio" : "video");
@@ -1163,6 +1157,7 @@ void NuPlayer::onMessageReceived(const sp<AMessage> &msg) {
                 if (reason == Renderer::kDueToTimeout && !(mPaused && mOffloadAudio)) {
                     // TimeoutWhenPaused is only for offload mode.
                     ALOGW("Receive a stale message for teardown.");
+                    mRenderer->signalAudioTearDownComplete();
                     break;
                 }
                 closeAudioSink();
@@ -1701,17 +1696,22 @@ status_t NuPlayer::instantiateDecoder(
     }
 
     if (!audio) {
-        sp<MetaData> fileMeta = getFileMeta();
-        if (fileMeta == NULL) {
-            ALOGW("source has video meta but not file meta");
-            return -1;
+        sp<AMessage> params = new AMessage();
+        float rate = getFrameRate();
+        if (rate > 0) {
+            params->setFloat("frame-rate-total", rate);
         }
 
-        int32_t videoTemporalLayerCount = 0;
-        if (fileMeta->findInt32(kKeyTemporalLayerCount, &videoTemporalLayerCount)
-                && videoTemporalLayerCount > 0) {
-            sp<AMessage> params = new AMessage();
-            params->setInt32("temporal-layer-count", videoTemporalLayerCount);
+        sp<MetaData> fileMeta = getFileMeta();
+        if (fileMeta != NULL) {
+            int32_t videoTemporalLayerCount;
+            if (fileMeta->findInt32(kKeyTemporalLayerCount, &videoTemporalLayerCount)
+                    && videoTemporalLayerCount > 0) {
+                params->setInt32("temporal-layer-count", videoTemporalLayerCount);
+            }
+        }
+
+        if (params->countEntries() > 0) {
             (*decoder)->setParameters(params);
         }
     }
