@@ -50,6 +50,12 @@
 
 namespace android {
 
+enum {
+    // maximum size of an atom. Some atoms can be bigger according to the spec,
+    // but we only allow up to this size.
+    kMaxAtomSize = 64 * 1024 * 1024,
+};
+
 class MPEG4Source : public MediaSource {
 public:
     // Caller retains ownership of both "dataSource" and "sampleTable".
@@ -544,7 +550,10 @@ status_t MPEG4Extractor::readMetaData() {
     }
     if (psshsize > 0 && psshsize <= UINT32_MAX) {
         char *buf = (char*)malloc(psshsize);
-        CHECK(buf != NULL);
+        if (!buf) {
+            ALOGE("b/28471206");
+            return NO_MEMORY;
+        }
         char *ptr = buf;
         for (size_t i = 0; i < mPssh.size(); i++) {
             memcpy(ptr, mPssh[i].uuid, 20); // uuid + length
@@ -842,6 +851,13 @@ status_t MPEG4Extractor::parseChunk(off64_t *offset, int depth) {
     PathAdder autoAdder(&mPath, chunk_type);
 
     off64_t chunk_data_size = *offset + chunk_size - data_offset;
+    if (chunk_type != FOURCC('m', 'd', 'a', 't') && chunk_data_size > kMaxAtomSize) {
+        char errMsg[100];
+        sprintf(errMsg, "%s atom has size %" PRId64, chunk, chunk_data_size);
+        ALOGE("%s (b/28615448)", errMsg);
+        android_errorWriteWithInfoLog(0x534e4554, "28615448", -1, errMsg, strlen(errMsg));
+        return ERROR_MALFORMED;
+    }
 
     if (chunk_type != FOURCC('c', 'p', 'r', 't')
             && chunk_type != FOURCC('c', 'o', 'v', 'r')
@@ -939,6 +955,11 @@ status_t MPEG4Extractor::parseChunk(off64_t *offset, int depth) {
             }
 
             if (isTrack) {
+                int32_t trackId;
+                // There must be exact one track header per track.
+                if (!mLastTrack->meta->findInt32(kKeyTrackID, &trackId)) {
+                    mLastTrack->skipTrack = true;
+                }
                 if (mLastTrack->skipTrack) {
                     Track *cur = mFirstTrack;
 
@@ -1730,6 +1751,11 @@ status_t MPEG4Extractor::parseChunk(off64_t *offset, int depth) {
 
             sp<ABuffer> buffer = new ABuffer(chunk_data_size);
 
+            if (buffer->data() == NULL) {
+                ALOGE("b/28471206");
+                return NO_MEMORY;
+            }
+
             if (mDataSource->readAt(
                         data_offset, buffer->data(), chunk_data_size) < chunk_data_size) {
                 return ERROR_IO;
@@ -1746,6 +1772,11 @@ status_t MPEG4Extractor::parseChunk(off64_t *offset, int depth) {
         case FOURCC('h', 'v', 'c', 'C'):
         {
             sp<ABuffer> buffer = new ABuffer(chunk_data_size);
+
+            if (buffer->data() == NULL) {
+                ALOGE("b/28471206");
+                return NO_MEMORY;
+            }
 
             if (mDataSource->readAt(
                         data_offset, buffer->data(), chunk_data_size) < chunk_data_size) {
@@ -2082,6 +2113,10 @@ status_t MPEG4Extractor::parseChunk(off64_t *offset, int depth) {
                     return ERROR_MALFORMED;
                 }
                 sp<ABuffer> buffer = new ABuffer(chunk_data_size + 1);
+                if (buffer->data() == NULL) {
+                    ALOGE("b/28471206");
+                    return NO_MEMORY;
+                }
                 if (mDataSource->readAt(
                     data_offset, buffer->data(), chunk_data_size) != (ssize_t)chunk_data_size) {
                     return ERROR_IO;
@@ -2882,6 +2917,9 @@ sp<MediaSource> MPEG4Extractor::getTrack(size_t index) {
                 break;
             }
         }
+    } else {
+        ALOGE("b/21657957");
+        return NULL;
     }
 
     ALOGV("getTrack called, pssh: %zu", mPssh.size());
