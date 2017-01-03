@@ -2228,8 +2228,6 @@ status_t CameraService::BasicClient::finishCameraOps() {
         mCameraService->updateStatus(ICameraServiceListener::STATUS_PRESENT,
                 String8::format("%d", mCameraId), rejected);
 
-        // Transition device state to CLOSED
-        mCameraService->updateProxyDeviceState(ICameraServiceProxy::CAMERA_STATE_CLOSED,
 #ifndef NO_FLASHLIGHT
         // Notify flashlight that a camera device is closed.
         mCameraService->mFlashlight->deviceClosed(
