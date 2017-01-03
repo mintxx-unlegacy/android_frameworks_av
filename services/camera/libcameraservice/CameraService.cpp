@@ -168,7 +168,9 @@ void CameraService::onFirstRef()
     // Update battery life tracking if service is restarting
     BatteryNotifier& notifier(BatteryNotifier::getInstance());
     notifier.noteResetCamera();
+#ifndef NO_FLASHLIGHT
     notifier.noteResetFlashlight();
+#endif
 
     camera_module_t *rawModule;
     int err = hw_get_module(CAMERA_HARDWARE_MODULE_ID,
@@ -202,12 +204,14 @@ void CameraService::onFirstRef()
         setUpVendorTags();
     }
 
+#ifndef NO_FLASHLIGHT
     mFlashlight = new CameraFlashlight(*mModule, *this);
     status_t res = mFlashlight->findFlashUnits();
     if (res) {
         // impossible because we haven't open any camera devices.
         ALOGE("Failed to find flash units.");
     }
+#endif
 
     int latestStrangeCameraId = INT_MAX;
     for (int i = 0; i < mNumberOfCameras; i++) {
@@ -257,10 +261,12 @@ void CameraService::onFirstRef()
             mCameraStates.emplace(cameraId, std::make_shared<CameraState>(cameraId, cost,
                     conflicting));
         }
+#ifndef NO_FLASHLIGHT
         if (mFlashlight->hasFlashUnit(cameraId)) {
             mTorchStatusMap.add(cameraId,
                     ICameraServiceListener::TORCH_STATUS_AVAILABLE_OFF);
         }
+#endif
     }
 
     if (mModule->getModuleApiVersion() >= CAMERA_MODULE_API_VERSION_2_1) {
@@ -370,7 +376,7 @@ void CameraService::onTorchStatusChangedLocked(const String8& cameraId,
         int32_t newStatus) {
     ALOGI("%s: Torch status changed for cameraId=%s, newStatus=%d",
             __FUNCTION__, cameraId.string(), newStatus);
-
+#ifndef NO_FLASHLIGHT
     int32_t status;
     status_t res = getTorchStatusLocked(cameraId, &status);
     if (res) {
@@ -423,6 +429,7 @@ void CameraService::onTorchStatusChangedLocked(const String8& cameraId,
             i->onTorchStatusChanged(newStatus, String16{cameraId});
         }
     }
+#endif
 }
 
 Status CameraService::getNumberOfCameras(int32_t type, int32_t* numCameras) {
@@ -2223,7 +2230,11 @@ status_t CameraService::BasicClient::finishCameraOps() {
 
         // Transition device state to CLOSED
         mCameraService->updateProxyDeviceState(ICameraServiceProxy::CAMERA_STATE_CLOSED,
+#ifndef NO_FLASHLIGHT
+        // Notify flashlight that a camera device is closed.
+        mCameraService->mFlashlight->deviceClosed(
                 String8::format("%d", mCameraId));
+#endif
     }
     // Always stop watching, even if no camera op is active
     if (mOpsCallback != NULL) {
@@ -2666,12 +2677,14 @@ void CameraService::handleTorchClientBinderDied(const wp<IBinder> &who) {
         if (mTorchClientMap[i] == who) {
             // turn off the torch mode that was turned on by dead client
             String8 cameraId = mTorchClientMap.keyAt(i);
+#ifndef NO_FLASHLIGHT
             status_t res = mFlashlight->setTorchMode(cameraId, false);
             if (res) {
                 ALOGE("%s: torch client died but couldn't turn off torch: "
                     "%s (%d)", __FUNCTION__, strerror(-res), res);
                 return;
             }
+#endif
             mTorchClientMap.removeItemsAt(i);
             break;
         }
