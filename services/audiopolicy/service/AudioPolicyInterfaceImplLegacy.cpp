@@ -622,7 +622,6 @@ status_t AudioPolicyService::registerPolicyMixes(Vector<AudioMix> mixes __unused
     return INVALID_OPERATION;
 }
 
-
 status_t AudioPolicyService::startAudioSource(const struct audio_port_config *source __unused,
                                   const audio_attributes_t *attributes __unused,
                                   audio_io_handle_t *handle __unused)
@@ -647,7 +646,6 @@ status_t AudioPolicyService::getMasterMono(bool *mono __unused)
 
 status_t AudioPolicyService::listAudioSessions(audio_stream_type_t streams __unused,
                                   Vector< sp<AudioSessionInfo>> &sessions __unused)
-
 {
     return INVALID_OPERATION;
 }

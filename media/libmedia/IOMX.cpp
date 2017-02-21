@@ -803,10 +803,11 @@ status_t BnOMX::onTransact(
                                         err = setInternalOption(node, index, type, params, size);
                                         break;
                                     }
-
                                     default:
                                         TRESPASS();
-                                }
+
+                            }
+
                             }
                         }
                     }

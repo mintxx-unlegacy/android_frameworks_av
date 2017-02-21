@@ -2228,11 +2228,13 @@ status_t CameraService::BasicClient::finishCameraOps() {
         mCameraService->updateStatus(ICameraServiceListener::STATUS_PRESENT,
                 String8::format("%d", mCameraId), rejected);
 
+
 #ifndef NO_FLASHLIGHT
         // Notify flashlight that a camera device is closed.
         mCameraService->mFlashlight->deviceClosed(
                 String8::format("%d", mCameraId));
 #endif
+
     }
     // Always stop watching, even if no camera op is active
     if (mOpsCallback != NULL) {
