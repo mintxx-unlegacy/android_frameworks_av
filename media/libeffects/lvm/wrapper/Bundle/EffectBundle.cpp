@@ -29,6 +29,8 @@
 #include "EffectBundle.h"
 #include "math.h"
 
+#define EFFECT_PARAM_SIZE_MAX       65536
+
 
 // effect_handle_t interface implementation for bass boost
 extern "C" const struct effect_interface_s gLvmEffectInterface;
@@ -3563,3 +3565,4 @@ audio_effect_library_t AUDIO_EFFECT_LIBRARY_INFO_SYM = {
 };
 
 }
+
