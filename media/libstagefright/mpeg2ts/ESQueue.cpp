@@ -12,6 +12,25 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * This file was modified by Dolby Laboratories, Inc. The portions of the
+ * code that are surrounded by "DOLBY..." are copyrighted and
+ * licensed separately, as follows:
+ *
+ *  (C) 2011-2016 Dolby Laboratories, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
  */
 
 //#define LOG_NDEBUG 0
@@ -34,13 +53,18 @@
 #include <inttypes.h>
 #include <netinet/in.h>
 #include <stagefright/AVExtensions.h>
-
+#ifdef DOLBY_ENABLE
+#include "DolbyESQueueExtImpl.h"
+#endif // DOLBY_END
 namespace android {
 
 ElementaryStreamQueue::ElementaryStreamQueue(Mode mode, uint32_t flags)
     : mMode(mode),
       mFlags(flags),
       mEOSReached(false) {
+#ifdef DOLBY_ENABLE
+    independent_streams_processed = 0;
+#endif // DOLBY_END
 }
 
 sp<MetaData> ElementaryStreamQueue::getFormat() {
@@ -391,6 +415,35 @@ status_t ElementaryStreamQueue::appendData(
                 break;
             }
 
+#ifdef DOLBY_ENABLE
+            case EAC3:
+            {
+                uint8_t *ptr = (uint8_t *)data;
+
+                ssize_t startOffset = -1;
+                for (size_t i = 0; i < size; ++i) {
+                    if (IsSeeminglyValidEAC3AudioHeader(&ptr[i], size - i)) {
+                        startOffset = i;
+                        break;
+                    }
+                }
+
+                if (startOffset < 0) {
+                    return ERROR_MALFORMED;
+                }
+
+                if (startOffset > 0) {
+                    ALOGI("found something resembling a DDP audio "
+                         "syncword at offset %zd",
+                         startOffset);
+                }
+
+                data = &ptr[startOffset];
+                size -= startOffset;
+                break;
+            }
+#endif // DOLBY_END
+
             case MPEG_AUDIO:
             {
                 uint8_t *ptr = (uint8_t *)data;
@@ -500,6 +553,10 @@ sp<ABuffer> ElementaryStreamQueue::dequeueAccessUnit() {
             return dequeueAccessUnitAAC();
         case AC3:
             return dequeueAccessUnitAC3();
+#ifdef DOLBY_ENABLE
+        case EAC3:
+            return dequeueAccessUnitEAC3();
+#endif // DOLBY_END
         case MPEG_VIDEO:
             return dequeueAccessUnitMPEGVideo();
         case MPEG4_VIDEO:

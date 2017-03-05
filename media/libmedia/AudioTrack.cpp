@@ -1402,7 +1402,7 @@ status_t AudioTrack::createTrack_l()
     }
 
     audio_output_flags_t flags = mFlags;
-
+    audio_output_flags_t trackFlags = mFlags;
     pid_t tid = -1;
     if (mFlags & AUDIO_OUTPUT_FLAG_FAST) {
         if (mAudioTrackThread != 0 && !mThreadCanCallJava) {
@@ -1410,6 +1410,9 @@ status_t AudioTrack::createTrack_l()
         }
     }
 
+    if (mTrackOffloaded) {
+        trackFlags = (audio_output_flags_t)(flags | AUDIO_OUTPUT_FLAG_DIRECT);
+    }
     size_t temp = frameCount;   // temp may be replaced by a revised value of frameCount,
                                 // but we will still need the original value also
     audio_session_t originalSessionId = mSessionId;
@@ -1418,7 +1421,7 @@ status_t AudioTrack::createTrack_l()
                                                       mFormat,
                                                       mChannelMask,
                                                       &temp,
-                                                      &flags,
+                                                      &trackFlags,
                                                       mSharedBuffer,
                                                       output,
                                                       mClientPid,
@@ -2200,7 +2203,7 @@ status_t AudioTrack::restoreTrack_l(const char *from)
     // output parameters and new IAudioFlinger in createTrack_l()
     AudioSystem::clearAudioConfigCache();
 
-    if (isOffloadedOrDirect_l() || mDoNotReconnect) {
+    if ((isOffloadedOrDirect_l() || mDoNotReconnect) && !mPlaybackRateSet) {
         // FIXME re-creation of offloaded and direct tracks is not yet implemented;
         // reconsider enabling for linear PCM encodings when position can be preserved.
         return DEAD_OBJECT;

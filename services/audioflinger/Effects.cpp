@@ -13,6 +13,25 @@
 ** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 ** See the License for the specific language governing permissions and
 ** limitations under the License.
+**
+** This file was modified by Dolby Laboratories, Inc. The portions of the
+** code that are surrounded by "DOLBY..." are copyrighted and
+** licensed separately, as follows:
+**
+**  (C) 2011-2016 Dolby Laboratories, Inc.
+**
+** Licensed under the Apache License, Version 2.0 (the "License");
+** you may not use this file except in compliance with the License.
+** You may obtain a copy of the License at
+**
+**    http://www.apache.org/licenses/LICENSE-2.0
+**
+** Unless required by applicable law or agreed to in writing, software
+** distributed under the License is distributed on an "AS IS" BASIS,
+** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+** See the License for the specific language governing permissions and
+** limitations under the License.
+**
 */
 
 
@@ -607,6 +626,22 @@ status_t AudioFlinger::EffectModule::command(uint32_t cmdCode,
         android_errorWriteLog(0x534e4554, "32438594");
         return -EINVAL;
     }
+    if (cmdCode == EFFECT_CMD_GET_PARAM &&
+        (sizeof(effect_param_t) > *replySize
+          || ((effect_param_t *)pCmdData)->psize > *replySize
+                                                   - sizeof(effect_param_t)
+          || ((effect_param_t *)pCmdData)->vsize > *replySize
+                                                   - sizeof(effect_param_t)
+                                                   - ((effect_param_t *)pCmdData)->psize
+          || roundUpDelta(((effect_param_t *)pCmdData)->psize, (uint32_t)sizeof(int)) >
+                                                   *replySize
+                                                   - sizeof(effect_param_t)
+                                                   - ((effect_param_t *)pCmdData)->psize
+                                                   - ((effect_param_t *)pCmdData)->vsize)) {
+        ALOGV("\tLVM_ERROR : EFFECT_CMD_GET_PARAM: reply size inconsistent");
+                     android_errorWriteLog(0x534e4554, "32705438");
+        return -EINVAL;
+    }
     if ((cmdCode == EFFECT_CMD_SET_PARAM
             || cmdCode == EFFECT_CMD_SET_PARAM_DEFERRED) &&  // DEFERRED not generally used
         (sizeof(effect_param_t) > cmdSize
@@ -834,6 +869,9 @@ status_t AudioFlinger::EffectModule::setAudioSource(audio_source_t source)
 
 void AudioFlinger::EffectModule::setSuspended(bool suspended)
 {
+#ifdef DOLBY_ENABLE
+    EffectDapController::instance()->effectSuspended(this, suspended);
+#endif // DOLBY_END
     Mutex::Autolock _l(mLock);
     mSuspended = suspended;
 }
@@ -1292,36 +1330,54 @@ status_t AudioFlinger::EffectHandle::command(uint32_t cmdCode,
         // particular client process:  no risk to block the whole media server process or mixer
         // threads if we are stuck here
         Mutex::Autolock _l(mCblk->lock);
-        if (mCblk->clientIndex > EFFECT_PARAM_BUFFER_SIZE ||
-            mCblk->serverIndex > EFFECT_PARAM_BUFFER_SIZE) {
+
+        // keep local copy of index in case of client corruption b/32220769
+        const uint32_t clientIndex = mCblk->clientIndex;
+        const uint32_t serverIndex = mCblk->serverIndex;
+        if (clientIndex > EFFECT_PARAM_BUFFER_SIZE ||
+            serverIndex > EFFECT_PARAM_BUFFER_SIZE) {
             mCblk->serverIndex = 0;
             mCblk->clientIndex = 0;
             return BAD_VALUE;
         }
         status_t status = NO_ERROR;
-        while (mCblk->serverIndex < mCblk->clientIndex) {
-            int reply;
-            uint32_t rsize = sizeof(int);
-            int *p = (int *)(mBuffer + mCblk->serverIndex);
-            int size = *p++;
-            if (((uint8_t *)p + size) > mBuffer + mCblk->clientIndex) {
+        effect_param_t *param = NULL;
+        for (uint32_t index = serverIndex; index < clientIndex;) {
+            int *p = (int *)(mBuffer + index);
+            const int size = *p++;
+            if (size < 0
+                    || size > EFFECT_PARAM_BUFFER_SIZE
+                    || ((uint8_t *)p + size) > mBuffer + clientIndex) {
                 ALOGW("command(): invalid parameter block size");
+                status = BAD_VALUE;
                 break;
             }
-            effect_param_t *param = (effect_param_t *)p;
-            if (param->psize == 0 || param->vsize == 0) {
-                ALOGW("command(): null parameter or value size");
-                mCblk->serverIndex += size;
-                continue;
+
+            // copy to local memory in case of client corruption b/32220769
+            param = (effect_param_t *)realloc(param, size);
+            if (param == NULL) {
+                ALOGW("command(): out of memory");
+                status = NO_MEMORY;
+                break;
             }
-            uint32_t psize = sizeof(effect_param_t) +
-                             ((param->psize - 1) / sizeof(int) + 1) * sizeof(int) +
-                             param->vsize;
+            memcpy(param, p, size);
+
+            int reply = 0;
+            uint32_t rsize = sizeof(reply);
             status_t ret = mEffect->command(EFFECT_CMD_SET_PARAM,
-                                            psize,
-                                            p,
+                                            size,
+                                            param,
                                             &rsize,
                                             &reply);
+
+            // verify shared memory: server index shouldn't change; client index can't go back.
+            if (serverIndex != mCblk->serverIndex
+                    || clientIndex > mCblk->clientIndex) {
+                android_errorWriteLog(0x534e4554, "32220769");
+                status = BAD_VALUE;
+                break;
+            }
+
             // stop at first error encountered
             if (ret != NO_ERROR) {
                 status = ret;
@@ -1331,8 +1387,9 @@ status_t AudioFlinger::EffectHandle::command(uint32_t cmdCode,
                 *(int *)pReplyData = reply;
                 break;
             }
-            mCblk->serverIndex += size;
+            index += size;
         }
+        free(param);
         mCblk->serverIndex = 0;
         mCblk->clientIndex = 0;
         return status;
@@ -1656,8 +1713,12 @@ status_t AudioFlinger::EffectChain::addEffect_l(const sp<EffectModule>& effect)
         ALOGV("addEffect_l() effect %p, added in chain %p at rank %zu", effect.get(), this,
                 idx_insert);
     }
+#ifdef DOLBY_ENABLE
+    return effect->configure();
+#else // DOLBY_END
     effect->configure();
     return NO_ERROR;
+#endif // LINE_ADDED_BY_DOLBY
 }
 
 // removeEffect_l() must be called with PlaybackThread::mLock held
@@ -1687,6 +1748,11 @@ size_t AudioFlinger::EffectChain::removeEffect_l(const sp<EffectModule>& effect)
             mEffects.removeAt(i);
             ALOGV("removeEffect_l() effect %p, removed from chain %p at rank %zu", effect.get(),
                     this, i);
+#ifdef DOLBY_ENABLE
+            if (effect->suspended() && EffectDapController::instance()->isDapEffect(effect)) {
+                effect->setSuspended(false);
+            }
+#endif // DOLBY_END
             break;
         }
     }

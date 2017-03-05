@@ -12,6 +12,25 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * This file was modified by Dolby Laboratories, Inc. The portions of the
+ * code that are surrounded by "DOLBY..." are copyrighted and
+ * licensed separately, as follows:
+ *
+ *  (C) 2011-2016 Dolby Laboratories, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
  */
 
 //#define LOG_NDEBUG 0
@@ -60,6 +79,9 @@
 #include "include/avc_utils.h"
 #include "include/DataConverter.h"
 #include "omx/OMXUtils.h"
+#ifdef DOLBY_ENABLE
+#include "DolbyACodecExtImpl.h"
+#endif // DOLBY_END
 
 #include <stagefright/AVExtensions.h>
 
@@ -1760,6 +1782,11 @@ const char *ACodec::getComponentRole(
             "audio_decoder.ac3", "audio_encoder.ac3" },
         { MEDIA_MIMETYPE_AUDIO_EAC3,
             "audio_decoder.eac3", "audio_encoder.eac3" },
+#ifdef DOLBY_ENABLE
+        { MEDIA_MIMETYPE_AUDIO_EAC3_JOC,
+            "audio_decoder.eac3_joc", NULL },
+#endif // DOLBY_END
+
     };
 
     static const size_t kNumMimeToRole =
@@ -3881,6 +3908,7 @@ status_t ACodec::setupVideoEncoder(
         if (!msg->findInt32("frame-rate", &tmp)) {
             return INVALID_OPERATION;
         }
+        outputFormat->setInt32("frame-rate", tmp);
         frameRate = (float)tmp;
         mTimePerFrameUs = (int64_t) (1000000.0f / frameRate);
     }
@@ -5630,7 +5658,11 @@ void ACodec::sendFormatChange() {
     }
 
     sp<AMessage> notify = mNotify->dup();
-    getVQZIPInfo(mOutputFormat);
+
+    int32_t isVQZIPSession;
+    if (mInputFormat->findInt32("vqzip", &isVQZIPSession) && isVQZIPSession) {
+        getVQZIPInfo(mOutputFormat);
+    }
     notify->setInt32("what", kWhatOutputFormatChanged);
     notify->setMessage("format", mOutputFormat);
 
@@ -6474,6 +6506,8 @@ bool ACodec::BaseState::onOMXFillBufferDone(
 
             reply->setInt32("buffer-id", info->mBufferID);
 
+            (void)mCodec->setDSModeHint(reply, flags, timeUs);
+
             notify->setMessage("reply", reply);
 
             notify->post();
@@ -6539,8 +6573,9 @@ void ACodec::BaseState::onOutputBufferDrained(const sp<AMessage> &msg) {
         ALOGW_IF(err != NO_ERROR, "failed to set dataspace: %d", err);
     }
 
+    bool skip = mCodec->getDSModeHint(msg);
     int32_t render;
-    if (mCodec->mNativeWindow != NULL
+    if (!skip && mCodec->mNativeWindow != NULL
             && msg->findInt32("render", &render) && render != 0
             && info->mData != NULL && info->mData->size() != 0) {
         ATRACE_NAME("render");
@@ -6969,6 +7004,16 @@ bool ACodec::LoadedState::onMessageReceived(const sp<AMessage> &msg) {
             break;
         }
 
+#ifdef DOLBY_ENABLE
+        case ACodec::kWhatSetParameters:
+        {
+            mCodec->setDolbyParameter(msg);
+
+            handled = true;
+            break;
+        }
+#endif // DOLBY_END
+
         default:
             return BaseState::onMessageReceived(msg);
     }
@@ -7289,6 +7334,9 @@ void ACodec::LoadedState::onStart() {
     if (err != OK) {
         mCodec->signalError(OMX_ErrorUndefined, makeNoSideEffectStatus(err));
     } else {
+#ifdef DOLBY_ENABLE
+        mCodec->setDolbyParameterOnEndpChange();
+#endif // DOLBY_END
         mCodec->changeState(mCodec->mLoadedToIdleState);
     }
 }
@@ -7799,6 +7847,9 @@ status_t ACodec::setParameters(const sp<AMessage> &params) {
             err = OK;
         }
     }
+#ifdef DOLBY_ENABLE
+    return setDolbyParameterOnProcessedAudio(params);
+#endif // DOLBY_END
 
     status_t err = configureTemporalLayers(params, false /* inConfigure */, mOutputFormat);
     if (err != OK) {
@@ -8000,6 +8051,14 @@ bool ACodec::OutputPortSettingsChangedState::onOMXEvent(
                     return false;
                 }
 
+#ifdef USE_LEGACY_RESCALING
+                // Resolution is about to change
+                // Make sure the decoder knows
+                sp<AMessage> reply = new AMessage(kWhatOutputBufferDrained, mCodec);
+                mCodec->onOutputFormatChanged();
+                mCodec->addKeyFormatChangesToRenderBufferNotification(reply);
+                mCodec->sendFormatChange();
+#endif
                 ALOGV("[%s] Output port now reenabled.", mCodec->mComponentName.c_str());
 
                 if (mCodec->mExecutingState->active()) {
@@ -8013,6 +8072,15 @@ bool ACodec::OutputPortSettingsChangedState::onOMXEvent(
 
             return false;
         }
+
+#ifdef USE_LEGACY_RESCALING
+        case OMX_EventPortSettingsChanged:
+            // Exynos OMX wants to share its' output crop
+            // For some reason trying to handle this here doesn't do anything
+            // We'll do it right before transitioning to ExecutingState
+            return true;
+        break;
+#endif
 
         default:
             return false;
