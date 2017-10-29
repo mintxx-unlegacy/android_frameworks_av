@@ -185,7 +185,9 @@ void CameraService::onFirstRef()
     // Update battery life tracking if service is restarting
     BatteryNotifier& notifier(BatteryNotifier::getInstance());
     notifier.noteResetCamera();
+#ifndef NO_FLASHLIGHT
     notifier.noteResetFlashlight();
+#endif
 
     status_t res = INVALID_OPERATION;
 
@@ -219,7 +221,7 @@ status_t CameraService::enumerateProviders() {
     // because HAL might need to setup static vendor keys in get_camera_info
     // TODO: maybe put this into CameraProviderManager::initialize()?
     mCameraProviderManager->setUpVendorTags();
-
+#ifndef NO_FLASHLIGHT
     if (nullptr == mFlashlight.get()) {
         mFlashlight = new CameraFlashlight(mCameraProviderManager, this);
     }
@@ -228,7 +230,7 @@ status_t CameraService::enumerateProviders() {
     if (res != OK) {
         ALOGE("Failed to enumerate flash units: %s (%d)", strerror(-res), res);
     }
-
+#endif
     for (auto& cameraId : mCameraProviderManager->getCameraDeviceIds()) {
         String8 id8 = String8(cameraId.c_str());
         {
@@ -257,10 +259,11 @@ status_t CameraService::enumerateProviders() {
         }
 
         onDeviceStatusChanged(id8, CameraDeviceStatus::PRESENT);
-
+#ifndef NO_FLASHLIGHT
         if (mFlashlight->hasFlashUnit(id8)) {
             mTorchStatusMap.add(id8, TorchModeStatus::AVAILABLE_OFF);
         }
+#endif
     }
 
     return OK;
@@ -366,6 +369,7 @@ void CameraService::onDeviceStatusChanged(const String8& id,
 
 void CameraService::onTorchStatusChanged(const String8& cameraId,
         TorchModeStatus newStatus) {
+#ifndef NO_FLASHLIGHT
     Mutex::Autolock al(mTorchStatusMutex);
     onTorchStatusChangedLocked(cameraId, newStatus);
 }
@@ -427,6 +431,7 @@ void CameraService::onTorchStatusChangedLocked(const String8& cameraId,
             i->onTorchStatusChanged(mapToInterface(newStatus), String16{cameraId});
         }
     }
+#endif
 }
 
 Status CameraService::getNumberOfCameras(int32_t type, int32_t* numCameras) {
@@ -1343,10 +1348,10 @@ Status CameraService::connectHelper(const sp<CALLBACK>& cameraCb, const String8&
             device = static_cast<CLIENT*>(clientTmp.get());
             return ret;
         }
-
+#ifndef NO_FLASHLIGHT
         // give flashlight a chance to close devices if necessary.
         mFlashlight->prepareDeviceOpen(cameraId);
-
+#endif
         int facing = -1;
         int deviceVersion = getDeviceVersion(cameraId, /*out*/&facing);
         if (facing == -1) {
@@ -1503,7 +1508,7 @@ Status CameraService::setTorchMode(const String16& cameraId, bool enabled,
             mTorchUidMap[id].first = uid;
         }
     }
-
+#ifndef NO_FLASHLIGHT
     status_t err = mFlashlight->setTorchMode(id, enabled);
 
     if (err != OK) {
@@ -1541,7 +1546,7 @@ Status CameraService::setTorchMode(const String16& cameraId, bool enabled,
             mTorchClientMap.valueAt(index)->unlinkToDeath(this);
         }
     }
-
+#endif
     return Status::ok();
 }
 
@@ -2614,12 +2619,14 @@ void CameraService::handleTorchClientBinderDied(const wp<IBinder> &who) {
         if (mTorchClientMap[i] == who) {
             // turn off the torch mode that was turned on by dead client
             String8 cameraId = mTorchClientMap.keyAt(i);
+#ifndef NO_FLASHLIGHT
             status_t res = mFlashlight->setTorchMode(cameraId, false);
             if (res) {
                 ALOGE("%s: torch client died but couldn't turn off torch: "
                     "%s (%d)", __FUNCTION__, strerror(-res), res);
                 return;
             }
+#endif
             mTorchClientMap.removeItemsAt(i);
             break;
         }
