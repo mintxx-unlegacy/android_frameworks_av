@@ -1763,7 +1763,7 @@ audio_module_handle_t AudioFlinger::loadHwModule_l(const char *name)
     AudioHwDevice::Flags flags = static_cast<AudioHwDevice::Flags>(0);
     {  // scope for auto-lock pattern
         AutoMutex lock(mHardwareLock);
-
+#ifndef MR0_AUDIO_BLOB
         if (0 == mAudioHwDevs.size()) {
             mHardwareStatus = AUDIO_HW_GET_MASTER_VOLUME;
             float mv;
@@ -1777,19 +1777,19 @@ audio_module_handle_t AudioFlinger::loadHwModule_l(const char *name)
                 mMasterMute = mm;
             }
         }
-
+#endif
         mHardwareStatus = AUDIO_HW_SET_MASTER_VOLUME;
         if (OK == dev->setMasterVolume(mMasterVolume)) {
             flags = static_cast<AudioHwDevice::Flags>(flags |
                     AudioHwDevice::AHWD_CAN_SET_MASTER_VOLUME);
         }
-
+#ifndef MR0_AUDIO_BLOB
         mHardwareStatus = AUDIO_HW_SET_MASTER_MUTE;
         if (OK == dev->setMasterMute(mMasterMute)) {
             flags = static_cast<AudioHwDevice::Flags>(flags |
                     AudioHwDevice::AHWD_CAN_SET_MASTER_MUTE);
         }
-
+#endif
         mHardwareStatus = AUDIO_HW_IDLE;
     }
 
