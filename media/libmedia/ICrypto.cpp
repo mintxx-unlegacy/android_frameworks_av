@@ -199,8 +199,13 @@ IMPLEMENT_META_INTERFACE(Crypto, "android.hardware.ICrypto");
 
 void BnCrypto::readVector(const Parcel &data, Vector<uint8_t> &vector) const {
     uint32_t size = data.readInt32();
-    vector.insertAt((size_t)0, size);
-    data.read(vector.editArray(), size);
+    if (vector.insertAt((size_t)0, size) < 0) {
+        vector.clear();
+    }
+    if (data.read(vector.editArray(), size) != NO_ERROR) {
+        vector.clear();
+        ALOGE("62872384");
+    }
 }
 
 void BnCrypto::writeVector(Parcel *reply, Vector<uint8_t> const &vector) const {
@@ -233,15 +238,23 @@ status_t BnCrypto::onTransact(
         {
             CHECK_INTERFACE(ICrypto, data, reply);
 
-            uint8_t uuid[16];
-            data.read(uuid, sizeof(uuid));
+            uint8_t uuid[16] = {0};
+            if (data.read(uuid, sizeof(uuid)) != NO_ERROR) {
+                android_errorWriteLog(0x534e4554, "144767096");
+                reply->writeInt32(BAD_VALUE);
+                return OK;
+            }
 
             size_t opaqueSize = data.readInt32();
             void *opaqueData = NULL;
 
             if (opaqueSize > 0) {
                 opaqueData = malloc(opaqueSize);
-                data.read(opaqueData, opaqueSize);
+                if (data.read(opaqueData, opaqueSize) != NO_ERROR) {
+                    android_errorWriteLog(0x534e4554, "144767096");
+                    reply->writeInt32(BAD_VALUE);
+                    return OK;
+                }
             }
 
             reply->writeInt32(createPlugin(uuid, opaqueData, opaqueSize));

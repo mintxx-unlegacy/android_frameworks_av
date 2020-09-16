@@ -23,6 +23,7 @@
 
 #include <binder/IPCThreadState.h>
 #include <binder/Parcel.h>
+#include <binder/PermissionCache.h>
 #include <media/IMediaExtractor.h>
 #include <media/stagefright/MetaData.h>
 
@@ -209,11 +210,16 @@ String8 ExtractorInstance::toString() const {
     for (size_t i = 0; i < tracks.size(); i++) {
         const String8 desc = trackDescriptions.itemAt(i);
         str.appendFormat("    track {%s} ", desc.string());
-        const sp<IMediaSource> source = tracks.itemAt(i).promote();
-        if (source == NULL) {
-            str.append(": deleted\n");
+        wp<IMediaSource> wSource = tracks.itemAt(i);
+        if (wSource == NULL) {
+            str.append(": null\n");
         } else {
-            str.appendFormat(": active\n");
+            const sp<IMediaSource> source = wSource.promote();
+            if (source == NULL) {
+                str.append(": deleted\n");
+            } else {
+                str.appendFormat(": active\n");
+            }
         }
     }
     return str;
@@ -232,9 +238,14 @@ void registerMediaSource(
         if (extractor != NULL && extractor == ex) {
             if (instance.tracks.size() > 5) {
                 instance.tracks.resize(5);
+                instance.trackDescriptions.resize(5);
             }
             instance.tracks.push_front(source);
-            instance.trackDescriptions.add(source->getFormat()->toString());
+            if (source != NULL) {
+                instance.trackDescriptions.push_front(source->getFormat()->toString());
+            } else {
+                instance.trackDescriptions.push_front(String8::empty());
+            }
             break;
         }
     }
@@ -262,13 +273,21 @@ void registerMediaExtractor(
 
 status_t dumpExtractors(int fd, const Vector<String16>&) {
     String8 out;
-    out.append("Recent extractors, most recent first:\n");
-    {
-        Mutex::Autolock lock(sExtractorsLock);
-        for (size_t i = 0; i < sExtractors.size(); i++) {
-            const ExtractorInstance &instance = sExtractors.itemAt(i);
-            out.append("  ");
-            out.append(instance.toString());
+    const IPCThreadState* ipc = IPCThreadState::self();
+    const int pid = ipc->getCallingPid();
+    const int uid = ipc->getCallingUid();
+    if (!PermissionCache::checkPermission(String16("android.permission.DUMP"), pid, uid)) {
+        out.appendFormat("Permission Denial: "
+                "can't dump MediaExtractor from pid=%d, uid=%d\n", pid, uid);
+    } else {
+        out.append("Recent extractors, most recent first:\n");
+        {
+            Mutex::Autolock lock(sExtractorsLock);
+            for (size_t i = 0; i < sExtractors.size(); i++) {
+                const ExtractorInstance &instance = sExtractors.itemAt(i);
+                out.append("  ");
+                out.append(instance.toString());
+            }
         }
     }
     write(fd, out.string(), out.size());
